@@ -1,6 +1,29 @@
 import { supabase } from './supabaseClient'
 import type { Employee, LeaveRequest, LeaveStatus } from './types'
 
+export async function fetchLeaveTypes(): Promise<string[]> {
+  // Prefer database-driven list via RPC (recommended for ENUM leave_type).
+  // Fallback to a safe default list if RPC is not installed yet.
+  const fallback = ['Annual', 'Un-Planned', 'Sick', 'Un-Paid', 'Comp. Day', 'Granted Day-off', 'Absent Day']
+  try {
+    const { data, error } = await supabase.rpc('get_leave_types')
+    if (error) throw error
+
+    // Supabase can return either:
+    // - [{ value: 'Annual' }, ...] for table-returning functions
+    // - ['Annual', ...] for array-returning functions
+    const list = Array.isArray(data)
+      ? (typeof data[0] === 'string'
+          ? (data as string[])
+          : (data as any[]).map((r) => r?.value).filter(Boolean))
+      : []
+
+    return list.length ? list : fallback
+  } catch {
+    return fallback
+  }
+}
+
 export async function getMyEmployeeProfile(): Promise<Employee | null> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null

@@ -14,7 +14,8 @@ export type Employee = {
   created_at: string
 }
 
-export type LeaveType = 'annual' | 'sudden' | 'sick' | 'unpaid'
+// Leave types are configured in the database (ENUM / constraint). The UI loads them dynamically.
+export type LeaveType = string
 export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
 
 export type LeaveRequest = {

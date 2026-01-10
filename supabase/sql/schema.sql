@@ -5,7 +5,17 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type public.leave_type as enum ('annual','sudden','sick','unpaid');
+  -- NOTE: Leave types are business-configurable; these values are used by the UI.
+  -- If you already created this ENUM in your project, add new values with ALTER TYPE.
+  create type public.leave_type as enum (
+    'Annual',
+    'Un-Planned',
+    'Sick',
+    'Un-Paid',
+    'Comp. Day',
+    'Granted Day-off',
+    'Absent Day'
+  );
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -89,6 +99,27 @@ begin
   return v_employee_id;
 end;
 $$;
+
+-- Returns the allowed leave types from the database.
+-- The frontend uses this to populate the "Leave type" dropdown.
+-- Works when leave_type is an ENUM called public.leave_type.
+create or replace function public.get_leave_types()
+returns table(value text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select e.enumlabel::text as value
+  from pg_type t
+  join pg_enum e on t.oid = e.enumtypid
+  join pg_namespace n on n.oid = t.typnamespace
+  where n.nspname = 'public'
+    and t.typname = 'leave_type'
+  order by e.enumsortorder;
+$$;
+
+grant execute on function public.get_leave_types() to anon, authenticated;
 
 alter table public.employees enable row level security;
 alter table public.leave_requests enable row level security;
@@ -176,21 +207,21 @@ with me as (
 approved as (
   select
     lr.employee_id,
-    lr.leave_type,
+    lower(lr.leave_type::text) as leave_type_norm,
     sum(public.leave_days_inclusive(lr.start_date, lr.end_date))::int as used_days
   from public.leave_requests lr
   join me on me.id = lr.employee_id
   where lr.status = 'approved'
     and extract(year from lr.start_date) = extract(year from now())
-  group by lr.employee_id, lr.leave_type
+  group by lr.employee_id, lower(lr.leave_type::text)
 ),
 agg as (
   select
     me.id as employee_id,
     extract(year from now())::int as year,
-    coalesce((select used_days from approved where leave_type='annual'),0) as annual_used,
-    coalesce((select used_days from approved where leave_type='sudden'),0) as sudden_used,
-    coalesce((select used_days from approved where leave_type='sick'),0) as sick_used
+    coalesce((select sum(used_days) from approved where leave_type_norm = 'annual'),0)::int as annual_used,
+    coalesce((select sum(used_days) from approved where leave_type_norm in ('un-planned','unplanned','sudden')),0)::int as sudden_used,
+    coalesce((select sum(used_days) from approved where leave_type_norm = 'sick'),0)::int as sick_used
   from me
 )
 select
@@ -212,11 +243,42 @@ select
   extract(year from lr.start_date)::int as year,
   e.annual_allowance,
   e.sudden_allowance,
-  sum(case when lr.status='approved' and lr.leave_type='annual' then public.leave_days_inclusive(lr.start_date, lr.end_date) else 0 end)::int as annual_used,
-  sum(case when lr.status='approved' and lr.leave_type='sudden' then public.leave_days_inclusive(lr.start_date, lr.end_date) else 0 end)::int as sudden_used,
-  sum(case when lr.status='approved' and lr.leave_type='sick' then public.leave_days_inclusive(lr.start_date, lr.end_date) else 0 end)::int as sick_used,
-  greatest(e.annual_allowance - sum(case when lr.status='approved' and lr.leave_type='annual' then public.leave_days_inclusive(lr.start_date, lr.end_date) else 0 end), 0)::int as annual_remaining,
-  greatest(e.sudden_allowance - sum(case when lr.status='approved' and lr.leave_type='sudden' then public.leave_days_inclusive(lr.start_date, lr.end_date) else 0 end), 0)::int as sudden_remaining
+  sum(
+    case when lr.status='approved' and lower(lr.leave_type::text) = 'annual'
+      then public.leave_days_inclusive(lr.start_date, lr.end_date)
+      else 0
+    end
+  )::int as annual_used,
+  sum(
+    case when lr.status='approved' and lower(lr.leave_type::text) in ('un-planned','unplanned','sudden')
+      then public.leave_days_inclusive(lr.start_date, lr.end_date)
+      else 0
+    end
+  )::int as sudden_used,
+  sum(
+    case when lr.status='approved' and lower(lr.leave_type::text) = 'sick'
+      then public.leave_days_inclusive(lr.start_date, lr.end_date)
+      else 0
+    end
+  )::int as sick_used,
+  greatest(
+    e.annual_allowance - sum(
+      case when lr.status='approved' and lower(lr.leave_type::text) = 'annual'
+        then public.leave_days_inclusive(lr.start_date, lr.end_date)
+        else 0
+      end
+    ),
+    0
+  )::int as annual_remaining,
+  greatest(
+    e.sudden_allowance - sum(
+      case when lr.status='approved' and lower(lr.leave_type::text) in ('un-planned','unplanned','sudden')
+        then public.leave_days_inclusive(lr.start_date, lr.end_date)
+        else 0
+      end
+    ),
+    0
+  )::int as sudden_remaining
 from public.employees e
 left join public.leave_requests lr on lr.employee_id = e.id
 group by e.id, year, e.annual_allowance, e.sudden_allowance;
