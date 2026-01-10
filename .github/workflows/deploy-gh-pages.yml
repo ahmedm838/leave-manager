@@ -25,10 +25,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          # IMPORTANT:
+          # Do NOT use npm caching here unless you commit a lock file
+          # (package-lock.json / yarn.lock / npm-shrinkwrap.json)
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build
         env:
