@@ -2,26 +2,29 @@ import { supabase } from './supabaseClient'
 import type { Employee, LeaveRequest, LeaveStatus } from './types'
 
 export async function fetchLeaveTypes(): Promise<string[]> {
-  // Prefer database-driven list via RPC (recommended for ENUM leave_type).
-  // Fallback to a safe default list if RPC is not installed yet.
-  const fallback = ['Annual', 'Un-Planned', 'Sick', 'Un-Paid', 'Comp. Day', 'Granted Day-off', 'Absent Day']
-  try {
-    const { data, error } = await supabase.rpc('get_leave_types')
-    if (error) throw error
+  // Database-driven list via RPC.
+  // NOTE: We intentionally do NOT provide a frontend fallback list.
+  // If the RPC is missing or returns an empty list, we want the UI to show an error
+  // (so the dropdown reflects *only* what exists in the database).
+  const { data, error } = await supabase.rpc('get_leave_types')
+  if (error) throw error
 
-    // Supabase can return either:
-    // - [{ value: 'Annual' }, ...] for table-returning functions
-    // - ['Annual', ...] for array-returning functions
-    const list = Array.isArray(data)
-      ? (typeof data[0] === 'string'
-          ? (data as string[])
-          : (data as any[]).map((r) => r?.value).filter(Boolean))
-      : []
+  // Supabase can return either:
+  // - [{ value: 'Annual' }, ...] for table-returning functions
+  // - ['Annual', ...] for array-returning functions
+  const raw = Array.isArray(data) ? data : []
+  const list = (typeof raw[0] === 'string'
+    ? (raw as string[])
+    : (raw as any[]).map((r) => r?.value))
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter(Boolean)
 
-    return list.length ? list : fallback
-  } catch {
-    return fallback
-  }
+  // De-dupe while preserving order.
+  const seen = new Set<string>()
+  const uniq = list.filter((v) => (seen.has(v) ? false : (seen.add(v), true)))
+
+  if (!uniq.length) throw new Error('No leave types found in the database.')
+  return uniq
 }
 
 export async function getMyEmployeeProfile(): Promise<Employee | null> {

@@ -24,7 +24,11 @@ export function NewRequest() {
           setType(list[0] ?? '')
         }
       } catch (e: any) {
-        if (!ignore) setErr(e?.message ?? 'Failed to load leave types')
+        if (!ignore) {
+          setTypes([])
+          setType('')
+          setErr(e?.message ?? 'Failed to load leave types')
+        }
       } finally {
         if (!ignore) setTypesLoading(false)
       }
@@ -71,6 +75,10 @@ export function NewRequest() {
             <label className="text-sm text-slate-700 dark:text-slate-200">Type</label>
             {typesLoading ? (
               <div className="mt-2 text-sm text-slate-600 dark:text-slate-300"><Spinner /> Loading leave types…</div>
+            ) : types.length === 0 ? (
+              <div className="mt-2 text-sm text-red-600 dark:text-red-300">
+                No leave types are available from the database. Please contact HR/Admin.
+              </div>
             ) : (
               <select
                 className="mt-1 w-full rounded-lg border px-3 py-2"
@@ -95,7 +103,7 @@ export function NewRequest() {
 
           <div className="md:col-span-2">
             <button
-              disabled={busy || typesLoading}
+              disabled={busy || typesLoading || types.length === 0}
               className="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 disabled:opacity-60"
             >
               {busy ? <span className="inline-flex items-center gap-2"><Spinner /> Submitting</span> : 'Submit request'}
