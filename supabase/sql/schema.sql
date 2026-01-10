@@ -49,16 +49,45 @@ as $$
   select (p_end - p_start + 1)::int
 $$;
 
+-- IMPORTANT:
+-- This function MUST be SECURITY DEFINER to avoid RLS recursion ("stack depth limit exceeded").
+-- Without SECURITY DEFINER, RLS evaluation of policies that call is_admin() can recursively
+-- query public.employees, causing infinite recursion.
 create or replace function public.is_admin()
 returns boolean
-language sql
+language plpgsql
 stable
+security definer
+set search_path = public, auth
 as $$
-  select exists (
-    select 1 from public.employees e
+begin
+  return exists (
+    select 1
+    from public.employees e
     where e.user_id = auth.uid()
       and e.role = 'admin'
-  )
+  );
+end;
+$$;
+
+-- Convenience helper (also SECURITY DEFINER) to avoid repeating employee lookup subqueries
+-- inside RLS policies.
+create or replace function public.current_employee_id()
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_employee_id uuid;
+begin
+  select e.id into v_employee_id
+  from public.employees e
+  where e.user_id = auth.uid();
+
+  return v_employee_id;
+end;
 $$;
 
 alter table public.employees enable row level security;
@@ -89,7 +118,7 @@ on public.leave_requests
 for select
 using (
   public.is_admin()
-  or employee_id in (select id from public.employees where user_id = auth.uid())
+  or employee_id = public.current_employee_id()
 );
 
 drop policy if exists "leave_insert_own" on public.leave_requests;
@@ -97,7 +126,7 @@ create policy "leave_insert_own"
 on public.leave_requests
 for insert
 with check (
-  employee_id in (select id from public.employees where user_id = auth.uid())
+  employee_id = public.current_employee_id()
 );
 
 create or replace function public.set_employee_id()
@@ -107,9 +136,7 @@ security definer
 as $$
 begin
   if new.employee_id is null then
-    select id into new.employee_id
-    from public.employees
-    where user_id = auth.uid();
+    new.employee_id := public.current_employee_id();
   end if;
   return new;
 end;
@@ -126,11 +153,11 @@ on public.leave_requests
 for update
 using (
   status = 'pending'
-  and employee_id in (select id from public.employees where user_id = auth.uid())
+  and employee_id = public.current_employee_id()
 )
 with check (
   status in ('pending','cancelled')
-  and employee_id in (select id from public.employees where user_id = auth.uid())
+  and employee_id = public.current_employee_id()
 );
 
 drop policy if exists "leave_update_admin" on public.leave_requests;
