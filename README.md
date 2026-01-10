@@ -19,11 +19,20 @@ Starter implementation:
 3) Apply schema:
 - Run `supabase/sql/schema.sql` in Supabase SQL editor.
 
-## Edge function (recommended) for “Add employee”
+## Edge functions (recommended)
+Deploy these Edge Functions:
+
+1) `admin-invite` (admin adds employees)
 - Deploy `supabase/functions/admin-invite/index.ts` as an Edge Function named `admin-invite`.
-- Set secrets:
-  - SUPABASE_URL
-  - SUPABASE_SERVICE_ROLE_KEY (never in frontend)
+
+2) `employee-signup` (user sets password from the Sign up tab)
+- Deploy `supabase/functions/employee-signup/index.ts` as an Edge Function named `employee-signup`.
+
+Set secrets (server-side only; never in frontend):
+- `SUPABASE_URL` (usually provided automatically)
+- `SERVICE_ROLE_KEY` (your Supabase service role key)
+
+Note: Some Supabase projects block custom secret names starting with `SUPABASE_`. The functions in this repo support both `SUPABASE_SERVICE_ROLE_KEY` and `SERVICE_ROLE_KEY`.
 
 ## First admin user
 Fast approach:

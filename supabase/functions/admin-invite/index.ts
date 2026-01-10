@@ -35,8 +35,10 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
-    if (!supabaseUrl || !serviceKey) return text(500, "Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY")
+    // NOTE: Supabase secret names cannot start with the SUPABASE_ prefix in many projects.
+    // We support both to keep deployments flexible.
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY")
+    if (!supabaseUrl || !serviceKey) return text(500, "Missing SUPABASE_URL / SERVICE_ROLE_KEY")
 
     const authHeader = req.headers.get("Authorization") || ""
     const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null

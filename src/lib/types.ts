@@ -2,7 +2,8 @@ export type Role = 'admin' | 'user'
 
 export type Employee = {
   id: string
-  user_id: string
+  // Can be NULL for pre-registered employees before they create an auth account.
+  user_id: string | null
   code: string
   full_name: string
   email: string

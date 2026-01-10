@@ -14,7 +14,8 @@ exception when duplicate_object then null; end $$;
 
 create table if not exists public.employees (
   id uuid primary key default uuid_generate_v4(),
-  user_id uuid unique not null,
+  -- Allow pre-registering employees before they sign up.
+  user_id uuid unique,
   code text unique not null,
   full_name text not null,
   email text unique not null,
