@@ -1,0 +1,31 @@
+export type Role = 'admin' | 'user'
+
+export type Employee = {
+  id: string
+  user_id: string
+  code: string
+  full_name: string
+  email: string
+  role: Role
+  hiring_date: string | null
+  annual_allowance: number
+  sudden_allowance: number
+  created_at: string
+}
+
+export type LeaveType = 'annual' | 'sudden' | 'sick' | 'unpaid'
+export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
+
+export type LeaveRequest = {
+  id: string
+  employee_id: string
+  start_date: string
+  end_date: string
+  leave_type: LeaveType
+  reason: string | null
+  status: LeaveStatus
+  requested_at: string
+  decided_at: string | null
+  decided_by: string | null
+  decision_note: string | null
+}
