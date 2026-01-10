@@ -72,7 +72,7 @@ export function AdminEmployees() {
     <div>
       <h1 className="text-xl font-semibold">Employees</h1>
 
-      <div className="mt-4 rounded-2xl bg-white border shadow-sm p-4">
+      <div className="mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
         <div className="font-semibold">Invite / add new employee</div>
         <form className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3" onSubmit={doInvite}>
           <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Email" value={invite.email} onChange={e => setInvite({ ...invite, email: e.target.value })} required />
@@ -88,24 +88,24 @@ export function AdminEmployees() {
 
           <input className="rounded-lg border px-3 py-2 text-sm" type="date" value={invite.hiring_date} onChange={e => setInvite({ ...invite, hiring_date: e.target.value })} />
 
-          <div className="md:col-span-2 text-sm text-slate-600">
+          <div className="md:col-span-2 text-sm text-slate-600 dark:text-slate-300">
             {invMsg}
           </div>
 
-          <button disabled={invBusy} className="rounded-lg bg-slate-900 text-white px-3 py-2 text-sm hover:bg-slate-800 disabled:opacity-60">
+          <button disabled={invBusy} className="rounded-lg bg-slate-900 text-white px-3 py-2 text-sm hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 disabled:opacity-60">
             {invBusy ? <span className="inline-flex items-center gap-2"><Spinner /> Inviting</span> : 'Send invite'}
           </button>
         </form>
       </div>
 
-      <div className="mt-4 rounded-2xl bg-white border shadow-sm overflow-hidden">
+      <div className="mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-4"><Spinner /></div>
         ) : error ? (
           <div className="p-4 text-sm text-red-600">{error}</div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
+            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200">
               <tr>
                 <th className="text-left p-3">Code</th>
                 <th className="text-left p-3">Name</th>
@@ -117,7 +117,7 @@ export function AdminEmployees() {
             </thead>
             <tbody>
               {rows.map(emp => (
-                <tr key={emp.id} className="border-t">
+                <tr key={emp.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="p-3">{emp.code}</td>
                   <td className="p-3">{emp.full_name}</td>
                   <td className="p-3">{emp.email}</td>
@@ -150,7 +150,7 @@ export function AdminEmployees() {
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td className="p-4 text-slate-600" colSpan={6}>No employees.</td></tr>
+                <tr><td className="p-4 text-slate-600 dark:text-slate-300" colSpan={6}>No employees.</td></tr>
               )}
             </tbody>
           </table>

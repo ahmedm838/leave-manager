@@ -5,10 +5,10 @@ import { Spinner } from '../components/Spinner'
 
 function StatusPill({ status }: { status: string }) {
   const cls =
-    status === 'approved' ? 'bg-green-100 text-green-800' :
-    status === 'rejected' ? 'bg-red-100 text-red-800' :
-    status === 'pending' ? 'bg-amber-100 text-amber-800' :
-    'bg-slate-100 text-slate-700'
+    status === 'approved' ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200' :
+    status === 'rejected' ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200' :
+    status === 'pending' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' :
+    'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
   return <span className={'inline-flex rounded-full px-2 py-0.5 text-xs ' + cls}>{status}</span>
 }
 
@@ -54,14 +54,14 @@ export function History() {
         </select>
       </div>
 
-      <div className="mt-4 rounded-2xl bg-white border shadow-sm overflow-hidden">
+      <div className="mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-4"><Spinner /></div>
         ) : error ? (
           <div className="p-4 text-sm text-red-600">{error}</div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
+            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200">
               <tr>
                 <th className="text-left p-3">Dates</th>
                 <th className="text-left p-3">Type</th>
@@ -71,7 +71,7 @@ export function History() {
             </thead>
             <tbody>
               {filtered.map(r => (
-                <tr key={r.id} className="border-t">
+                <tr key={r.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="p-3">{r.start_date} → {r.end_date}</td>
                   <td className="p-3">{r.leave_type}</td>
                   <td className="p-3"><StatusPill status={r.status} /></td>
@@ -79,7 +79,7 @@ export function History() {
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td className="p-4 text-slate-600" colSpan={4}>No records.</td></tr>
+                <tr><td className="p-4 text-slate-600 dark:text-slate-300" colSpan={4}>No records.</td></tr>
               )}
             </tbody>
           </table>

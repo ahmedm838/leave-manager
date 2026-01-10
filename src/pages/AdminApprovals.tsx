@@ -39,17 +39,22 @@ export function AdminApprovals() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Approvals</h1>
-        <button className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50" onClick={load}>Refresh</button>
+        <button
+          className="rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/60"
+          onClick={load}
+        >
+          Refresh
+        </button>
       </div>
 
-      <div className="mt-4 rounded-2xl bg-white border shadow-sm overflow-hidden">
+      <div className="mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-4"><Spinner /></div>
         ) : error ? (
           <div className="p-4 text-sm text-red-600">{error}</div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
+            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200">
               <tr>
                 <th className="text-left p-3">Employee</th>
                 <th className="text-left p-3">Dates</th>
@@ -60,10 +65,10 @@ export function AdminApprovals() {
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.id} className="border-t">
+                <tr key={r.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="p-3">
                     <div className="font-medium">{r.employee?.full_name ?? '—'}</div>
-                    <div className="text-xs text-slate-500">{r.employee?.code} • {r.employee?.email}</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">{r.employee?.code} • {r.employee?.email}</div>
                   </td>
                   <td className="p-3">{r.start_date} → {r.end_date}</td>
                   <td className="p-3">{r.leave_type}</td>
@@ -89,7 +94,7 @@ export function AdminApprovals() {
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td className="p-4 text-slate-600" colSpan={5}>No pending requests.</td></tr>
+                <tr><td className="p-4 text-slate-600 dark:text-slate-300" colSpan={5}>No pending requests.</td></tr>
               )}
             </tbody>
           </table>

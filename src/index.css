@@ -2,4 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: light; }
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  /* Improve default form control legibility in both themes */
+  input,
+  select,
+  textarea {
+    @apply bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500;
+  }
+}

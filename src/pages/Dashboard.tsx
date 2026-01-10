@@ -5,10 +5,10 @@ import { Link } from 'react-router-dom'
 
 function Card({ title, value, sub }: { title: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-2xl bg-white border shadow-sm p-4">
-      <div className="text-sm text-slate-600">{title}</div>
+    <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+      <div className="text-sm text-slate-600 dark:text-slate-300">{title}</div>
       <div className="mt-2 text-2xl font-semibold">{value}</div>
-      {sub && <div className="mt-1 text-xs text-slate-500">{sub}</div>}
+      {sub && <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{sub}</div>}
     </div>
   )
 }
@@ -40,7 +40,12 @@ export function Dashboard() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Dashboard</h1>
-        <Link to="/app/request-new" className="rounded-lg bg-slate-900 text-white px-3 py-2 text-sm hover:bg-slate-800">New request</Link>
+        <Link
+          to="/app/request-new"
+          className="rounded-lg bg-slate-900 text-white px-3 py-2 text-sm hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
+        >
+          New request
+        </Link>
       </div>
 
       {loading ? (
@@ -55,9 +60,9 @@ export function Dashboard() {
         </div>
       )}
 
-      <div className="mt-6 rounded-2xl bg-white border shadow-sm p-4">
+      <div className="mt-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
         <div className="font-semibold">Tips</div>
-        <ul className="mt-2 text-sm text-slate-700 list-disc pl-5 space-y-1">
+        <ul className="mt-2 text-sm text-slate-700 dark:text-slate-200 list-disc pl-5 space-y-1">
           <li>Submit requests early to allow approval time.</li>
           <li>Check “My history” for status updates.</li>
           <li>If your balance looks incorrect, contact an admin to review records.</li>
