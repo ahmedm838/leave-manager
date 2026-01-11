@@ -238,7 +238,7 @@ function AdminEmployees() {
   const [name, setName] = useState("");
   const [userId, setUserId] = useState("");
   const [hiringDate, setHiringDate] = useState("");
-  const [roleId, setRoleId] = useState<number>(2); // 1=Admin, 2=User
+  const [role, setRole] = useState<RoleName>("User");
   const [password, setPassword] = useState("");
   const [planned, setPlanned] = useState(14);
   const [unplanned, setUnplanned] = useState(7);
@@ -261,7 +261,7 @@ function AdminEmployees() {
           "Authorization": `Bearer ${jwt}`,
         },
         body: JSON.stringify({
-          code, name, user_id: userId, hiring_date: hiringDate, role_id: roleId,
+          code, name, user_id: userId, hiring_date: hiringDate, role,
           password,
           planned_annual_balance: planned,
           unplanned_annual_balance: unplanned,
@@ -302,13 +302,9 @@ function AdminEmployees() {
         </div>
         <div>
           <div className="label mb-1">Role</div>
-          <select
-            className="input"
-            value={String(roleId)}
-            onChange={(e) => setRoleId(parseInt(e.target.value, 10))}
-          >
-            <option value="2">User</option>
-            <option value="1">Admin</option>
+          <select className="input" value={role} onChange={(e)=>setRole(e.target.value as RoleName)}>
+            <option value="User">User</option>
+            <option value="Admin">Admin</option>
           </select>
         </div>
         <div>
@@ -335,27 +331,6 @@ function AdminEmployees() {
 
 type BulkRow = { code: string; start_date: string; end_date: string; leave_type_id: number; remarks: string };
 
-// Normalize employee code input:
-// - trims whitespace
-// - removes internal spaces
-// - converts Arabic-Indic digits to Western digits
-function normalizeEmployeeCode(raw: string): string {
-  const s = String(raw ?? "");
-  const arabicIndic = "٠١٢٣٤٥٦٧٨٩";
-  const easternArabicIndic = "۰۱۲۳۴۵۶۷۸۹";
-  const converted = s
-    .split("")
-    .map((ch) => {
-      const a = arabicIndic.indexOf(ch);
-      if (a >= 0) return String(a);
-      const e = easternArabicIndic.indexOf(ch);
-      if (e >= 0) return String(e);
-      return ch;
-    })
-    .join("");
-  return converted.replace(/\s+/g, "").trim();
-}
-
 function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; leaveTypes: LeaveType[] }) {
   const defaultTypeId = leaveTypes.find(t => t.name === "Planned")?.id ?? (leaveTypes[0]?.id ?? 1);
   const [rows, setRows] = useState<BulkRow[]>([
@@ -377,23 +352,74 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
 
   async function submit() {
     setBusy(true); setErr(null); setMsg(null);
+
+    // Normalize employee code to avoid mismatches (spaces, zero-width chars, Arabic-Indic digits)
+    const normalizeCode = (input: string) => {
+      const map: Record<string, string> = {
+        "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
+        "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
+      };
+      return (input ?? "")
+        .trim()
+        .replace(/[\u200B\uFEFF]/g, "")        // zero-width space / BOM
+        .replace(/\s+/g, "")                  // all whitespace
+        .replace(/[٠-٩۰-۹]/g, (d) => map[d] ?? d);
+    };
+
+    let insertedCount = 0;
+    const missingCodes: string[] = [];
+
     try {
-      // Insert one by one to get good error message (balance guard will throw)
-      for (const row of rows) {
-        const code = normalizeEmployeeCode(row.code);
-        if (!code) throw new Error("Employee code is required");
+      const normalizedRows = rows.map(r => ({
+        ...r,
+        code: normalizeCode(r.code),
+      }));
+
+      const distinctCodes = Array.from(new Set(normalizedRows.map(r => r.code).filter(Boolean)));
+
+      if (distinctCodes.length === 0) {
+        throw new Error("Please enter at least one employee code.");
+      }
+
+      // Pre-validate codes so one missing code does not block other inserts
+      const { data: empRows, error: empErr } = await supabase
+        .from("employees")
+        .select("code")
+        .in("code", distinctCodes);
+
+      if (empErr) throw empErr;
+
+      const existing = new Set((empRows ?? []).map((e:any) => normalizeCode(e.code)));
+
+      const rowsToInsert = normalizedRows.filter(r => {
+        if (!r.code) return false;
+        if (!existing.has(r.code)) {
+          if (!missingCodes.includes(r.code)) missingCodes.push(r.code);
+          return false;
+        }
+        return true;
+      });
+
+      // Insert one by one to preserve clear balance/validation errors
+      for (const row of rowsToInsert) {
         const { error } = await supabase.from("leave_records").insert({
-          code,
+          code: row.code,
           start_date: row.start_date,
           end_date: row.end_date,
           leave_type_id: row.leave_type_id,
           remarks: row.remarks || null,
         });
         if (error) throw error;
+        insertedCount += 1;
       }
-      setMsg(`Inserted ${rows.length} record(s).`);
+
+      setMsg(`Inserted ${insertedCount} record(s).`);
+      if (missingCodes.length > 0) {
+        setErr(`Employee not found for code(s): ${missingCodes.join(", ")}.`);
+      }
     } catch (e:any) {
-      setErr(e?.message ?? String(e));
+      const base = e?.message ?? String(e);
+      setErr(insertedCount > 0 ? `Inserted ${insertedCount} record(s) before failure. ${base}` : base);
     } finally {
       setBusy(false);
     }
@@ -464,12 +490,7 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
     setErr(null);
     setInfo(null);
     try {
-      const normalized = normalizeEmployeeCode(code);
-      const { data: emp, error: empErr } = await supabase
-        .from("employees")
-        .select("id, code, name, hiring_date")
-        .eq("code", normalized)
-        .single();
+      const { data: emp, error: empErr } = await supabase.from("employees").select("id, code, name, hiring_date").eq("code", code).single();
       if (empErr) throw empErr;
 
       const { data: st, error: stErr } = await supabase

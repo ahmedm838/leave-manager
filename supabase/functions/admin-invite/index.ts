@@ -15,8 +15,7 @@ type Payload = {
   name: string;
   user_id: string; // dots allowed
   hiring_date: string; // YYYY-MM-DD
-  role?: "Admin" | "User";
-  role_id?: number | string; // 1=Admin, 2=User (frontend sends id)
+  role: "Admin" | "User";
   password: string;
   planned_annual_balance?: number;
   unplanned_annual_balance?: number;
@@ -92,33 +91,14 @@ serve(async (req) => {
 
     const email = toEmail(body.user_id);
 
-    // Resolve role_id
-    const parsedRoleId =
-      body.role_id !== undefined && body.role_id !== null && body.role_id !== ""
-        ? Number(body.role_id)
-        : null;
+    // Get role_id
+    const { data: roleRow, error: roleErr } = await adminClient
+      .from("roles")
+      .select("id")
+      .eq("name", body.role)
+      .single();
+    if (roleErr) throw roleErr;
 
-    let roleRow: { id: number } | null = null;
-
-    if (parsedRoleId && Number.isFinite(parsedRoleId)) {
-      const { data: byId, error: byIdErr } = await adminClient
-        .from("roles")
-        .select("id")
-        .eq("id", parsedRoleId)
-        .single();
-      if (byIdErr) throw byIdErr;
-      roleRow = byId as any;
-    } else {
-      // fallback: role name (Admin/User) or default User
-      const roleName = body.role ?? "User";
-      const { data: byName, error: byNameErr } = await adminClient
-        .from("roles")
-        .select("id")
-        .eq("name", roleName)
-        .single();
-      if (byNameErr) throw byNameErr;
-      roleRow = byName as any;
-    }
     // Create auth user (or keep existing)
     const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
       email,
