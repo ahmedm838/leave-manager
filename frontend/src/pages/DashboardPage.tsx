@@ -673,15 +673,49 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
 }
 
 function AdminResetPassword() {
-  const [userId, setUserId] = useState("");
+  const [employees, setEmployees] = useState<Array<Pick<Employee, "id" | "code" | "name" | "user_id">>>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [newPass, setNewPass] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  async function loadEmployees() {
+    setLoadingEmployees(true);
+    setErr(null);
+    try {
+      const { data, error } = await supabase
+        .from("employees")
+        .select("id, code, name, user_id")
+        .order("code", { ascending: true });
+      if (error) throw error;
+
+      const list = (data ?? []) as any;
+      setEmployees(list);
+
+      // Auto-select first employee if none selected
+      if (!selectedUserId && list.length > 0) {
+        setSelectedUserId(list[0].user_id);
+      }
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoadingEmployees(false);
+    }
+  }
+
+  useEffect(() => {
+    loadEmployees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function reset() {
     setBusy(true); setErr(null); setMsg(null);
     try {
+      if (!selectedUserId) throw new Error("Please select an employee.");
+      if (!newPass || newPass.length < 6) throw new Error("Password must be at least 6 characters.");
+
       const { data: sess } = await supabase.auth.getSession();
       const jwt = sess.session?.access_token;
       if (!jwt) throw new Error("No session");
@@ -693,11 +727,14 @@ function AdminResetPassword() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${jwt}`,
         },
-        body: JSON.stringify({ user_id: userId, new_password: newPass }),
+        body: JSON.stringify({ user_id: selectedUserId, new_password: newPass }),
       });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || "Failed");
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((j as any).error || "Failed");
+
       setMsg("Password updated.");
+      setNewPass("");
     } catch (e:any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -708,14 +745,44 @@ function AdminResetPassword() {
   return (
     <div className="space-y-4">
       <div className="text-sm text-slate-600 dark:text-slate-300">
-        Reset a user's password (Admin only).
+        Reset an employee's login password (Admin only).
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
-          <div className="label mb-1">User ID (or email)</div>
-          <input className="input" value={userId} onChange={(e)=>setUserId(e.target.value)} placeholder="e.g. ahmed.moustafa" />
+          <div className="label mb-1">Employee</div>
+          <div className="flex gap-2">
+            <select
+              className="input"
+              value={selectedUserId}
+              onChange={(e) => setSelectedUserId(e.target.value)}
+              disabled={loadingEmployees || employees.length === 0}
+            >
+              {employees.length === 0 ? (
+                <option value="">No employees found</option>
+              ) : (
+                employees.map((e) => (
+                  <option key={e.id} value={e.user_id}>
+                    {e.code} — {e.name}
+                  </option>
+                ))
+              )}
+            </select>
+
+            <button
+              className="btn-secondary whitespace-nowrap"
+              onClick={loadEmployees}
+              disabled={loadingEmployees}
+              title="Reload employees list"
+            >
+              {loadingEmployees ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Select an employee, then set a new password.
+          </div>
         </div>
+
         <div>
           <div className="label mb-1">New password (min 6)</div>
           <input className="input" type="password" value={newPass} onChange={(e)=>setNewPass(e.target.value)} />
@@ -725,7 +792,10 @@ function AdminResetPassword() {
       {err && <div className="rounded-xl border border-red-300/60 bg-red-50 dark:bg-red-950/40 dark:border-red-800/60 p-3 text-sm">{err}</div>}
       {msg && <div className="rounded-xl border border-emerald-300/60 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-800/60 p-3 text-sm">{msg}</div>}
 
-      <button className="btn" disabled={busy} onClick={reset}>{busy ? "Updating…" : "Update password"}</button>
+      <button className="btn" disabled={busy || loadingEmployees || employees.length===0} onClick={reset}>
+        {busy ? "Updating…" : "Update password"}
+      </button>
     </div>
   );
 }
+
