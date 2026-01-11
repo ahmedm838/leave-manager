@@ -575,7 +575,7 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
     setErr(null);
     setInfo(null);
     try {
-      if (!code) throw new Error(\"Please select an employee.\");
+      if (!code) throw new Error("Please select an employee.");
       const { data: emp, error: empErr } = await supabase.from("employees").select("id, code, name, hiring_date").eq("code", code).single();
       if (empErr) throw empErr;
 
