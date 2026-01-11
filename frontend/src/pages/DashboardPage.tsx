@@ -335,6 +335,27 @@ function AdminEmployees() {
 
 type BulkRow = { code: string; start_date: string; end_date: string; leave_type_id: number; remarks: string };
 
+// Normalize employee code input:
+// - trims whitespace
+// - removes internal spaces
+// - converts Arabic-Indic digits to Western digits
+function normalizeEmployeeCode(raw: string): string {
+  const s = String(raw ?? "");
+  const arabicIndic = "٠١٢٣٤٥٦٧٨٩";
+  const easternArabicIndic = "۰۱۲۳۴۵۶۷۸۹";
+  const converted = s
+    .split("")
+    .map((ch) => {
+      const a = arabicIndic.indexOf(ch);
+      if (a >= 0) return String(a);
+      const e = easternArabicIndic.indexOf(ch);
+      if (e >= 0) return String(e);
+      return ch;
+    })
+    .join("");
+  return converted.replace(/\s+/g, "").trim();
+}
+
 function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; leaveTypes: LeaveType[] }) {
   const defaultTypeId = leaveTypes.find(t => t.name === "Planned")?.id ?? (leaveTypes[0]?.id ?? 1);
   const [rows, setRows] = useState<BulkRow[]>([
@@ -359,8 +380,10 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
     try {
       // Insert one by one to get good error message (balance guard will throw)
       for (const row of rows) {
+        const code = normalizeEmployeeCode(row.code);
+        if (!code) throw new Error("Employee code is required");
         const { error } = await supabase.from("leave_records").insert({
-          code: row.code,
+          code,
           start_date: row.start_date,
           end_date: row.end_date,
           leave_type_id: row.leave_type_id,
@@ -441,7 +464,12 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
     setErr(null);
     setInfo(null);
     try {
-      const { data: emp, error: empErr } = await supabase.from("employees").select("id, code, name, hiring_date").eq("code", code).single();
+      const normalized = normalizeEmployeeCode(code);
+      const { data: emp, error: empErr } = await supabase
+        .from("employees")
+        .select("id, code, name, hiring_date")
+        .eq("code", normalized)
+        .single();
       if (empErr) throw empErr;
 
       const { data: st, error: stErr } = await supabase
