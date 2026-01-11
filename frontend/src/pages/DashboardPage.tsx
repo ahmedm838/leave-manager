@@ -238,7 +238,7 @@ function AdminEmployees() {
   const [name, setName] = useState("");
   const [userId, setUserId] = useState("");
   const [hiringDate, setHiringDate] = useState("");
-  const [role, setRole] = useState<RoleName>("User");
+  const [roleId, setRoleId] = useState<number>(2); // 1=Admin, 2=User
   const [password, setPassword] = useState("");
   const [planned, setPlanned] = useState(14);
   const [unplanned, setUnplanned] = useState(7);
@@ -261,7 +261,7 @@ function AdminEmployees() {
           "Authorization": `Bearer ${jwt}`,
         },
         body: JSON.stringify({
-          code, name, user_id: userId, hiring_date: hiringDate, role,
+          code, name, user_id: userId, hiring_date: hiringDate, role_id: roleId,
           password,
           planned_annual_balance: planned,
           unplanned_annual_balance: unplanned,
@@ -302,9 +302,13 @@ function AdminEmployees() {
         </div>
         <div>
           <div className="label mb-1">Role</div>
-          <select className="input" value={role} onChange={(e)=>setRole(e.target.value as RoleName)}>
-            <option value="User">User</option>
-            <option value="Admin">Admin</option>
+          <select
+            className="input"
+            value={String(roleId)}
+            onChange={(e) => setRoleId(parseInt(e.target.value, 10))}
+          >
+            <option value="2">User</option>
+            <option value="1">Admin</option>
           </select>
         </div>
         <div>
