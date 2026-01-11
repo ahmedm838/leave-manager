@@ -1,172 +1,152 @@
+
 // supabase/functions/admin-invite/index.ts
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
+// Inline CORS (Option A) to avoid bundling issues with ../_shared/cors.ts
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type InvitePayload = {
-  email: string;
+type Payload = {
+  code: string;
+  name: string;
+  user_id: string; // dots allowed
+  hiring_date: string; // YYYY-MM-DD
+  role: "Admin" | "User";
   password: string;
-  full_name: string;
-  employee_code: string;
-  hiring_date?: string; // YYYY-MM-DD
-  role?: "Admin" | "User";
-  planned_entitlement?: number;   // default 15
-  unplanned_entitlement?: number; // default 7
+  planned_annual_balance?: number;
+  unplanned_annual_balance?: number;
 };
 
-function jsonResponse(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+function toEmail(user_id: string) {
+  return user_id.includes("@") ? user_id : `${user_id}@ienergy.local`;
 }
 
 serve(async (req) => {
-  // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
-  if (req.method !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
-  }
 
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-  const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    return jsonResponse(500, {
-      error:
-        "Missing server config: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set",
-    });
-  }
-
-  const authHeader = req.headers.get("authorization") || "";
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.slice("Bearer ".length)
-    : "";
-
-  if (!token) {
-    return jsonResponse(401, { error: "Missing Authorization header" });
-  }
-
-  // Service-role client (server-side)
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-    auth: { persistSession: false },
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-
-  // 1) Validate caller and ensure caller is Admin (in public.employees)
-  const { data: callerUser, error: callerErr } = await supabase.auth.getUser(
-    token,
-  );
-  if (callerErr || !callerUser?.user) {
-    return jsonResponse(401, { error: "Invalid JWT" });
-  }
-
-  const callerId = callerUser.user.id;
-
-  const { data: callerEmployee, error: callerEmpErr } = await supabase
-    .from("employees")
-    .select("role")
-    .eq("user_id", callerId)
-    .maybeSingle();
-
-  if (callerEmpErr) {
-    return jsonResponse(500, { error: callerEmpErr.message });
-  }
-
-  if (!callerEmployee || callerEmployee.role !== "Admin") {
-    return jsonResponse(403, { error: "Forbidden: Admin only" });
-  }
-
-  // 2) Read payload
-  let payload: InvitePayload;
   try {
-    payload = await req.json();
-  } catch {
-    return jsonResponse(400, { error: "Invalid JSON body" });
-  }
+    const authHeader = req.headers.get("Authorization") || "";
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Missing authorization header" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-  const email = (payload.email || "").trim().toLowerCase();
-  const password = payload.password || "";
-  const full_name = (payload.full_name || "").trim();
-  const employee_code = (payload.employee_code || "").trim();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const adminClient = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  const role = payload.role ?? "User";
-  const planned_entitlement = Number.isFinite(payload.planned_entitlement)
-    ? Number(payload.planned_entitlement)
-    : 15;
-  const unplanned_entitlement = Number.isFinite(payload.unplanned_entitlement)
-    ? Number(payload.unplanned_entitlement)
-    : 7;
+    // Validate caller JWT and ensure they are an Admin in employees table
+    const jwt = authHeader.replace("Bearer ", "");
+    const { data: userData, error: userErr } = await adminClient.auth.getUser(jwt);
+    if (userErr || !userData?.user?.id) {
+      return new Response(JSON.stringify({ error: "Invalid JWT" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-  if (!email || !password || !full_name || !employee_code) {
-    return jsonResponse(400, {
-      error:
-        "Missing required fields: email, password, full_name, employee_code",
-    });
-  }
+    const callerUid = userData.user.id;
 
-  // 3) Prevent duplicates in employees by email or employee_code
-  const { data: existing, error: existingErr } = await supabase
-    .from("employees")
-    .select("id")
-    .or(`email.eq.${email},employee_code.eq.${employee_code}`)
-    .limit(1);
+    const { data: callerEmp, error: callerErr } = await adminClient
+      .from("employees")
+      .select("id, roles(name)")
+      .eq("auth_user_id", callerUid)
+      .maybeSingle();
 
-  if (existingErr) {
-    return jsonResponse(500, { error: existingErr.message });
-  }
-  if (existing && existing.length > 0) {
-    return jsonResponse(409, {
-      error: "Employee already exists (email or employee code)",
-    });
-  }
+    if (callerErr || !callerEmp || callerEmp.roles?.name !== "Admin") {
+      return new Response(JSON.stringify({ error: "Not authorized" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-  // 4) Create Auth user
-  const { data: created, error: createErr } = await supabase.auth.admin
-    .createUser({
+    const body = (await req.json()) as Payload;
+
+    if (!/^[2][0-9]{5}$/.test(body.code)) {
+      return new Response(JSON.stringify({ error: "Code must be 6 digits and start with 2" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (!/^[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$/.test(body.user_id)) {
+      return new Response(JSON.stringify({ error: "User ID allows letters/numbers and dots only" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (!body.password || body.password.length < 6) {
+      return new Response(JSON.stringify({ error: "Password must be at least 6 characters" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const email = toEmail(body.user_id);
+
+    // Get role_id
+    const { data: roleRow, error: roleErr } = await adminClient
+      .from("roles")
+      .select("id")
+      .eq("name", body.role)
+      .single();
+    if (roleErr) throw roleErr;
+
+    // Create auth user (or keep existing)
+    const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
       email,
-      password,
+      password: body.password,
       email_confirm: true,
     });
 
-  if (createErr || !created?.user) {
-    return jsonResponse(400, { error: createErr?.message ?? "Create user failed" });
+    if (createErr && !String(createErr.message || "").includes("already registered")) {
+      throw createErr;
+    }
+
+    // If already exists, fetch by email
+    let authUserId = created?.user?.id;
+    if (!authUserId) {
+      const { data: users, error: listErr } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 2000 });
+      if (listErr) throw listErr;
+      const found = users.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+      authUserId = found?.id;
+    }
+    if (!authUserId) {
+      return new Response(JSON.stringify({ error: "Could not resolve auth user" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Insert / upsert employee row (password is stored securely in Supabase Auth)
+    const { error: upsertErr } = await adminClient.from("employees").upsert({
+      auth_user_id: authUserId,
+      code: body.code,
+      name: body.name,
+      user_id: body.user_id,
+      hiring_date: body.hiring_date,
+      role_id: roleRow.id,
+      planned_annual_balance: body.planned_annual_balance ?? 14,
+      unplanned_annual_balance: body.unplanned_annual_balance ?? 7,
+      password_hash: null,
+    }, { onConflict: "code" });
+    if (upsertErr) throw upsertErr;
+
+    return new Response(JSON.stringify({ ok: true, auth_user_id: authUserId, email }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: String(e?.message ?? e) }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
-
-  const newUserId = created.user.id;
-
-  // 5) Insert into employees
-  const { data: empInserted, error: empErr } = await supabase
-    .from("employees")
-    .insert({
-      user_id: newUserId,
-      email,
-      full_name,
-      employee_code,
-      hiring_date: payload.hiring_date ?? null,
-      role,
-      planned_entitlement,
-      unplanned_entitlement,
-    })
-    .select("id, user_id, email, full_name, employee_code, role")
-    .single();
-
-  if (empErr) {
-    // rollback auth user if employees insert fails
-    await supabase.auth.admin.deleteUser(newUserId);
-    return jsonResponse(400, { error: empErr.message });
-  }
-
-  return jsonResponse(200, {
-    ok: true,
-    employee: empInserted,
-  });
 });

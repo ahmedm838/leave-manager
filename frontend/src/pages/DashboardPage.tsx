@@ -8,17 +8,29 @@ function yearNow(): number {
 }
 
 async function fetchMyEmployee(): Promise<Employee> {
-  const { data: user } = await supabase.auth.getUser();
-  const uid = user.user?.id;
-  if (!uid) throw new Error("Not authenticated");
+  // Prefer getSession() on initial load; it reads from persisted storage.
+  const { data: sessData, error: sessErr } = await supabase.auth.getSession();
+  if (sessErr) throw new Error(`Auth session error: ${sessErr.message}`);
+  const uid = sessData.session?.user?.id;
+  if (!uid) throw new Error("Not authenticated (no session)");
+
+  // Validate token with the Auth API to provide a clear error if JWT is invalid/expired.
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  if (userErr) throw new Error(`Auth user error: ${userErr.message}`);
+  if (!userData.user?.id) throw new Error("Not authenticated (no user)");
 
   const { data, error } = await supabase
     .from("employees")
     .select("id, auth_user_id, code, name, user_id, hiring_date, planned_annual_balance, unplanned_annual_balance, roles(name)")
     .eq("auth_user_id", uid)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
+  if (!data) {
+    throw new Error(
+      "No employee profile is linked to this login. Ask Admin to create your employee record (and set auth_user_id to your Auth user id).",
+    );
+  }
   return data as any;
 }
 
