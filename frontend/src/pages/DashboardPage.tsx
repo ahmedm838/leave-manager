@@ -217,8 +217,8 @@ function AdminSection({ currentYear, leaveTypes }: { currentYear: number; leaveT
   return (
     <section className="card p-5">
       <div className="flex flex-wrap gap-2">
-        <button className={tab==="employees" ? "btn" : "btn-secondary"} onClick={() => setTab("employees")}>Employees</button>
-        <button className={tab==="leaves" ? "btn" : "btn-secondary"} onClick={() => setTab("leaves")}>Add Leaves (Bulk)</button>
+        <button className={tab==="employees" ? "btn" : "btn-secondary"} onClick={() => setTab("employees")}>Add Employee</button>
+        <button className={tab==="leaves" ? "btn" : "btn-secondary"} onClick={() => setTab("leaves")}>Record Leave</button>
         <button className={tab==="status" ? "btn" : "btn-secondary"} onClick={() => setTab("status")}>Employee Status</button>
         <button className={tab==="password" ? "btn" : "btn-secondary"} onClick={() => setTab("password")}>Reset Password</button>
       </div>
@@ -234,6 +234,8 @@ function AdminSection({ currentYear, leaveTypes }: { currentYear: number; leaveT
 }
 
 function AdminEmployees() {
+  const [employees, setEmployees] = useState<Array<Pick<Employee, "id" | "code" | "name">>>([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [userId, setUserId] = useState("");
@@ -245,6 +247,32 @@ function AdminEmployees() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+
+  const [employees, setEmployees] = useState<Array<Pick<Employee, "id" | "code" | "name">>>([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
+
+  async function loadEmployees() {
+    setLoadingEmployees(true);
+    setErr(null);
+    try {
+      const { data, error } = await supabase
+        .from("employees")
+        .select("id, code, name")
+        .order("code", { ascending: true });
+      if (error) throw error;
+      setEmployees((data ?? []) as any);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoadingEmployees(false);
+    }
+  }
+
+  useEffect(() => {
+    loadEmployees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function invite() {
     setBusy(true); setErr(null); setMsg(null);
@@ -431,6 +459,20 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
         Add multiple leave records in one shot. If a deducted balance is insufficient, the insert fails with an error.
       </div>
 
+      <div className="flex items-center gap-2">
+        <div className="text-xs text-slate-500 dark:text-slate-400">
+          Select employees from the list (loaded from the Employees table).
+        </div>
+        <button
+          className="btn-secondary"
+          onClick={loadEmployees}
+          disabled={loadingEmployees}
+          title="Reload employees list"
+        >
+          {loadingEmployees ? "Refreshing…" : "Refresh employees"}
+        </button>
+      </div>
+
       <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead className="text-left text-slate-600 dark:text-slate-300">
@@ -446,7 +488,21 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
           <tbody>
             {rows.map((r, i) => (
               <tr key={i} className="border-t border-slate-200/60 dark:border-slate-800/60">
-                <td className="py-2 pr-3"><input className="input" value={r.code} onChange={(e)=>update(i,{code:e.target.value})} /></td>
+                <td className="py-2 pr-3">
+                  <select
+                    className="input"
+                    value={r.code}
+                    onChange={(e)=>update(i,{code:e.target.value})}
+                    disabled={loadingEmployees || employees.length === 0}
+                  >
+                    <option value="">Select employee…</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.code}>
+                        {emp.code} — {emp.name}
+                      </option>
+                    ))}
+                  </select>
+                </td>
                 <td className="py-2 pr-3"><input className="input" type="date" value={r.start_date} onChange={(e)=>update(i,{start_date:e.target.value})} /></td>
                 <td className="py-2 pr-3"><input className="input" type="date" value={r.end_date} onChange={(e)=>update(i,{end_date:e.target.value})} /></td>
                 <td className="py-2 pr-3">
@@ -486,10 +542,40 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
   const [edit, setEdit] = useState<any | null>(null);
   const [editBusy, setEditBusy] = useState(false);
 
+
+  async function loadEmployees() {
+    setLoadingEmployees(true);
+    setErr(null);
+    try {
+      const { data, error } = await supabase
+        .from("employees")
+        .select("id, code, name")
+        .order("code", { ascending: true });
+      if (error) throw error;
+      const list = (data ?? []) as any;
+      setEmployees(list);
+
+      // Auto-select first employee if none selected
+      if (!code && list.length > 0) {
+        setCode(list[0].code);
+      }
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoadingEmployees(false);
+    }
+  }
+
+  useEffect(() => {
+    loadEmployees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function load() {
     setErr(null);
     setInfo(null);
     try {
+      if (!code) throw new Error(\"Please select an employee.\");
       const { data: emp, error: empErr } = await supabase.from("employees").select("id, code, name, hiring_date").eq("code", code).single();
       if (empErr) throw empErr;
 
@@ -559,8 +645,31 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
-          <div className="label mb-1">Employee code</div>
-          <input className="input" value={code} onChange={(e)=>setCode(e.target.value)} placeholder="e.g. 200123" />
+          <div className="label mb-1">Employee</div>
+          <div className="flex gap-2">
+            <select
+              className="input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              disabled={loadingEmployees || employees.length === 0}
+            >
+              <option value="">Select employee…</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.code}>
+                  {e.code} — {e.name}
+                </option>
+              ))}
+            </select>
+
+            <button
+              className="btn-secondary whitespace-nowrap"
+              onClick={loadEmployees}
+              disabled={loadingEmployees}
+              title="Reload employees list"
+            >
+              {loadingEmployees ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         </div>
         <div>
           <div className="label mb-1">Year</div>
