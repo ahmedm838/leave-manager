@@ -248,32 +248,6 @@ function AdminEmployees() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-
-  const [employees, setEmployees] = useState<Array<Pick<Employee, "id" | "code" | "name">>>([]);
-  const [loadingEmployees, setLoadingEmployees] = useState(false);
-
-  async function loadEmployees() {
-    setLoadingEmployees(true);
-    setErr(null);
-    try {
-      const { data, error } = await supabase
-        .from("employees")
-        .select("id, code, name")
-        .order("code", { ascending: true });
-      if (error) throw error;
-      setEmployees((data ?? []) as any);
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    } finally {
-      setLoadingEmployees(false);
-    }
-  }
-
-  useEffect(() => {
-    loadEmployees();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   async function invite() {
     setBusy(true); setErr(null); setMsg(null);
     try {
@@ -367,6 +341,30 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  type EmployeeOption = Pick<Employee, "id" | "code" | "name">;
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
+
+  const loadEmployees = async () => {
+    setLoadingEmployees(true);
+    try {
+      const { data, error } = await supabase
+        .from("employees")
+        .select("id, code, name")
+        .order("code", { ascending: true });
+      if (error) throw error;
+      setEmployees((data ?? []) as EmployeeOption[]);
+    } finally {
+      setLoadingEmployees(false);
+    }
+  };
+
+  useEffect(() => {
+    loadEmployees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   function addRow() {
     setRows(r => [...r, { code: "", start_date: `${currentYear}-01-01`, end_date: `${currentYear}-01-01`, leave_type_id: defaultTypeId, remarks: "" }]);
@@ -539,6 +537,11 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
+  type EmployeeOption = Pick<Employee, "id" | "code" | "name">;
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
+
+
   const [edit, setEdit] = useState<any | null>(null);
   const [editBusy, setEditBusy] = useState(false);
 
@@ -552,7 +555,7 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
         .select("id, code, name")
         .order("code", { ascending: true });
       if (error) throw error;
-      const list = (data ?? []) as any;
+      const list = (data ?? []) as EmployeeOption[];
       setEmployees(list);
 
       // Auto-select first employee if none selected
@@ -800,7 +803,7 @@ function AdminResetPassword() {
         .order("code", { ascending: true });
       if (error) throw error;
 
-      const list = (data ?? []) as any;
+      const list = (data ?? []) as Array<Pick<Employee, "id" | "code" | "name" | "user_id">>;
       setEmployees(list);
 
       // Auto-select first employee if none selected
