@@ -59,9 +59,28 @@ export default function App() {
     return now;
   }
 
+  // "Effective" session is a local concept: once MAX_SESSION_MS elapses, we treat the user as logged out
+  // regardless of Supabase token refresh behavior or signOut reliability.
+  const sessionExpired = session ? Date.now() - getStartedAt() >= MAX_SESSION_MS : false;
+  const effectiveSession = session && !sessionExpired ? session : null;
+
   function isExpired(): boolean {
     if (!session) return false;
     return Date.now() - getStartedAt() >= MAX_SESSION_MS;
+  }
+
+  function hardClearSupabaseAuthStorage() {
+    // Supabase JS stores auth session in localStorage (key typically like: sb-<project>-auth-token).
+    // If signOut fails (offline / blocked), this ensures the app cannot silently re-hydrate the session.
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (/^sb-.*-auth-token$/.test(k)) localStorage.removeItem(k);
+      }
+    } catch {
+      // ignore
+    }
   }
 
   async function forceLogout() {
@@ -72,7 +91,22 @@ export default function App() {
     } catch {
       // ignore storage failures
     }
-    await supabase.auth.signOut();
+    // Immediately drop local session to prevent route loops (login -> dashboard).
+    setSession(null);
+    setSessionChecked(true);
+    try {
+      // Local scope is sufficient for this app and avoids relying on network.
+      // If unavailable in the current client version, the catch below handles it.
+      // @ts-ignore
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+    }
+    hardClearSupabaseAuthStorage();
     nav("/login", { replace: true });
   }
 
@@ -123,10 +157,10 @@ export default function App() {
   useEffect(() => {
     clearExpiryTimers();
 
-    if (!session) return;
+    if (!effectiveSession) return;
 
     // Immediate check (covers returning to a sleeping laptop/tab)
-    if (isExpired()) {
+    if (sessionExpired || isExpired()) {
       void forceLogout();
       return;
     }
@@ -140,7 +174,7 @@ export default function App() {
 
     // Backup checks: run more frequently and also on focus/visibility changes.
     const check = () => {
-      if (isExpired()) void forceLogout();
+      if (sessionExpired || isExpired()) void forceLogout();
     };
 
     expireIntervalRef.current = window.setInterval(check, 10_000);
@@ -153,7 +187,7 @@ export default function App() {
       window.removeEventListener("focus", check);
     };
     // IMPORTANT: depend on user id, not the full session object (token refreshes would otherwise reset timers).
-  }, [session?.user?.id]);
+  }, [effectiveSession?.user?.id, sessionExpired]);
 
   async function logout() {
     clearExpiryTimers();
@@ -163,7 +197,19 @@ export default function App() {
     } catch {
       // ignore
     }
-    await supabase.auth.signOut();
+    setSession(null);
+    setSessionChecked(true);
+    try {
+      // @ts-ignore
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+    }
+    hardClearSupabaseAuthStorage();
     nav("/login");
   }
 
@@ -182,15 +228,15 @@ export default function App() {
           <div className="font-bold text-lg">Leave Manager</div>
           <div className="flex gap-2">
             <button className="btn-secondary" onClick={toggleTheme}>Theme</button>
-            {session && <button className="btn" onClick={logout}>Logout</button>}
+            {effectiveSession && <button className="btn" onClick={logout}>Logout</button>}
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
         <Routes>
-          <Route path="/login" element={session ? <Navigate to="/" /> : <LoginPage />} />
-          <Route path="/" element={session ? <DashboardPage /> : <Navigate to="/login" />} />
+          <Route path="/login" element={effectiveSession ? <Navigate to="/" /> : <LoginPage />} />
+          <Route path="/" element={effectiveSession ? <DashboardPage /> : <Navigate to="/login" />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>
