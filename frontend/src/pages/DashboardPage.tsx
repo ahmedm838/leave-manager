@@ -545,6 +545,9 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
   const [edit, setEdit] = useState<any | null>(null);
   const [editBusy, setEditBusy] = useState(false);
 
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; start_date: string; end_date: string; leave_type: string } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
 
   async function loadEmployees() {
     setLoadingEmployees(true);
@@ -634,13 +637,31 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
   async function deleteRecord(id: string) {
     setErr(null);
     setInfo(null);
+    const { error } = await supabase.from("leave_records").delete().eq("id", id);
+    if (error) throw error;
+    setInfo("Leave record deleted.");
+    await load();
+  }
+
+  function askDelete(r: any) {
+    setPendingDelete({
+      id: r.id,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      leave_type: r.leave_types?.name ?? "",
+    });
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleteBusy(true);
     try {
-      const { error } = await supabase.from("leave_records").delete().eq("id", id);
-      if (error) throw error;
-      setInfo("Leave record deleted.");
-      await load();
-    } catch (e:any) {
+      await deleteRecord(pendingDelete.id);
+      setPendingDelete(null);
+    } catch (e: any) {
       setErr(e?.message ?? String(e));
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -735,7 +756,7 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
                     <td className="py-2 pr-3">
                       <div className="flex gap-2">
                         <button className="btn-secondary" onClick={() => setEdit({ ...r })}>Edit</button>
-                        <button className="btn-secondary" onClick={() => deleteRecord(r.id)}>Delete</button>
+                        <button className="btn-secondary" onClick={() => askDelete(r)}>Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -745,6 +766,27 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
           </table>
         </div>
       </div>
+
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="card p-5 w-full max-w-md">
+            <div className="text-lg font-bold">Confirm deletion</div>
+            <div className="mt-2 text-sm">Are you sure you want to delete this leave</div>
+
+            <div className="mt-4 rounded-xl border border-slate-200/60 dark:border-slate-800/60 p-3 text-sm">
+              <div><span className="font-semibold">Start:</span> {pendingDelete.start_date}</div>
+              <div className="mt-1"><span className="font-semibold">End:</span> {pendingDelete.end_date}</div>
+              <div className="mt-1"><span className="font-semibold">Type:</span> {pendingDelete.leave_type || "—"}</div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setPendingDelete(null)} disabled={deleteBusy}>No</button>
+              <button className="btn" onClick={confirmDelete} disabled={deleteBusy}>{deleteBusy ? "Deleting…" : "Yes"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {edit && (
         <div className="card p-5">
