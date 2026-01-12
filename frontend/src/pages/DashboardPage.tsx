@@ -226,7 +226,7 @@ function AdminSection({ currentYear, leaveTypes }: { currentYear: number; leaveT
       <div className="mt-6">
         {tab === "employees" && <AdminEmployees />}
         {tab === "leaves" && <AdminBulkLeaves currentYear={currentYear} leaveTypes={leaveTypes} />}
-        {tab === "status" && <AdminEmployeeStatus currentYear={currentYear} />}
+        {tab === "status" && <AdminEmployeeStatus currentYear={currentYear} leaveTypes={leaveTypes} />}
         {tab === "password" && <AdminResetPassword />}
       </div>
     </section>
@@ -529,7 +529,7 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
   );
 }
 
-function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
+function AdminEmployeeStatus({ currentYear, leaveTypes }: { currentYear: number; leaveTypes: LeaveType[] }) {
   const [code, setCode] = useState("");
   const [year, setYear] = useState(currentYear);
   const [status, setStatus] = useState<any>(null);
@@ -805,11 +805,27 @@ function AdminEmployeeStatus({ currentYear }: { currentYear: number }) {
               <input className="input" type="date" value={edit.end_date} onChange={(e)=>setEdit({ ...edit, end_date: e.target.value })} />
             </div>
             <div>
-              <div className="label mb-1">Leave type id</div>
-              <input className="input" type="number" value={edit.leave_type_id} onChange={(e)=>setEdit({ ...edit, leave_type_id: parseInt(e.target.value||"0",10) })} />
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                You can also edit type by ID; the system enforces balances.
-              </div>
+              <div className="label mb-1">Leave type</div>
+              {leaveTypes.length > 0 ? (
+                <select
+                  className="input"
+                  value={String(edit.leave_type_id ?? "")}
+                  onChange={(e) => setEdit({ ...edit, leave_type_id: parseInt(e.target.value, 10) })}
+                >
+                  {leaveTypes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="input"
+                  type="number"
+                  value={edit.leave_type_id}
+                  onChange={(e) => setEdit({ ...edit, leave_type_id: parseInt(e.target.value || "0", 10) })}
+                />
+              )}
             </div>
             <div>
               <div className="label mb-1">Remarks</div>
