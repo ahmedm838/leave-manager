@@ -18,6 +18,9 @@ export default function App() {
 
   const expireTimeoutRef = useRef<number | null>(null);
   const expireIntervalRef = useRef<number | null>(null);
+  // Keep session start time stable even if Supabase refreshes tokens (which updates the session object)
+  // or if localStorage is blocked.
+  const startedAtRef = useRef<number | null>(null);
 
   function clearExpiryTimers() {
     if (expireTimeoutRef.current !== null) {
@@ -30,8 +33,40 @@ export default function App() {
     }
   }
 
+  function getStartedAt(): number {
+    // Prefer the in-memory ref (stable within the tab)
+    if (startedAtRef.current !== null) return startedAtRef.current;
+
+    // Fall back to persisted storage (survives reload)
+    try {
+      const stored = Number(localStorage.getItem(SESSION_STARTED_AT_KEY) ?? "");
+      if (stored && !Number.isNaN(stored)) {
+        startedAtRef.current = stored;
+        return stored;
+      }
+    } catch {
+      // ignore storage failures
+    }
+
+    // Last resort: start now (best effort)
+    const now = Date.now();
+    startedAtRef.current = now;
+    try {
+      localStorage.setItem(SESSION_STARTED_AT_KEY, String(now));
+    } catch {
+      // ignore storage failures
+    }
+    return now;
+  }
+
+  function isExpired(): boolean {
+    if (!session) return false;
+    return Date.now() - getStartedAt() >= MAX_SESSION_MS;
+  }
+
   async function forceLogout() {
     clearExpiryTimers();
+    startedAtRef.current = null;
     try {
       localStorage.removeItem(SESSION_STARTED_AT_KEY);
     } catch {
@@ -53,14 +88,8 @@ export default function App() {
       // If there is an existing session (e.g., page refresh) and we don't have a
       // session start time, record it now.
       if (data.session) {
-        try {
-          const existing = Number(localStorage.getItem(SESSION_STARTED_AT_KEY) ?? "");
-          if (!existing || Number.isNaN(existing)) {
-            localStorage.setItem(SESSION_STARTED_AT_KEY, String(Date.now()));
-          }
-        } catch {
-          // ignore storage failures
-        }
+        // Prefer persisted value; otherwise set now.
+        void getStartedAt();
       }
     });
     const { data: sub } = supabase.auth.onAuthStateChange((evt, s) => {
@@ -69,14 +98,17 @@ export default function App() {
 
       // Only set session start time on explicit sign-in.
       if (evt === "SIGNED_IN") {
+        const now = Date.now();
+        startedAtRef.current = now;
         try {
-          localStorage.setItem(SESSION_STARTED_AT_KEY, String(Date.now()));
+          localStorage.setItem(SESSION_STARTED_AT_KEY, String(now));
         } catch {
           // ignore storage failures
         }
       }
       if (evt === "SIGNED_OUT") {
         clearExpiryTimers();
+        startedAtRef.current = null;
         try {
           localStorage.removeItem(SESSION_STARTED_AT_KEY);
         } catch {
@@ -91,52 +123,41 @@ export default function App() {
   useEffect(() => {
     clearExpiryTimers();
 
-    if (!session) {
-      return;
-    }
+    if (!session) return;
 
-    let startedAt = Date.now();
-    try {
-      const stored = Number(localStorage.getItem(SESSION_STARTED_AT_KEY) ?? "");
-      if (stored && !Number.isNaN(stored)) {
-        startedAt = stored;
-      } else {
-        localStorage.setItem(SESSION_STARTED_AT_KEY, String(startedAt));
-      }
-    } catch {
-      // If storage is blocked, fall back to a best-effort in-memory timer.
-    }
-
-    const remaining = startedAt + MAX_SESSION_MS - Date.now();
-    if (remaining <= 0) {
+    // Immediate check (covers returning to a sleeping laptop/tab)
+    if (isExpired()) {
       void forceLogout();
       return;
     }
+
+    const startedAt = getStartedAt();
+    const remaining = startedAt + MAX_SESSION_MS - Date.now();
 
     expireTimeoutRef.current = window.setTimeout(() => {
       void forceLogout();
-    }, remaining);
+    }, Math.max(0, remaining));
 
-    // Backup check (handles laptop sleep / tab suspension)
-    expireIntervalRef.current = window.setInterval(() => {
-      let sAt = startedAt;
-      try {
-        const stored = Number(localStorage.getItem(SESSION_STARTED_AT_KEY) ?? "");
-        if (stored && !Number.isNaN(stored)) sAt = stored;
-      } catch {
-        // ignore
-      }
+    // Backup checks: run more frequently and also on focus/visibility changes.
+    const check = () => {
+      if (isExpired()) void forceLogout();
+    };
 
-      if (Date.now() - sAt >= MAX_SESSION_MS) {
-        void forceLogout();
-      }
-    }, 30_000);
+    expireIntervalRef.current = window.setInterval(check, 10_000);
+    window.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
 
-    return () => clearExpiryTimers();
-  }, [session]);
+    return () => {
+      clearExpiryTimers();
+      window.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+    };
+    // IMPORTANT: depend on user id, not the full session object (token refreshes would otherwise reset timers).
+  }, [session?.user?.id]);
 
   async function logout() {
     clearExpiryTimers();
+    startedAtRef.current = null;
     try {
       localStorage.removeItem(SESSION_STARTED_AT_KEY);
     } catch {
