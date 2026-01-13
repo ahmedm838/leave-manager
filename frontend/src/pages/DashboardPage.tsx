@@ -379,6 +379,27 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
   async function submit() {
     setBusy(true); setErr(null); setMsg(null);
 
+    const daysInclusive = (start: string, end: string): number => {
+      const s = new Date(start);
+      const e = new Date(end);
+      if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0;
+      const diff = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24));
+      return diff + 1;
+    };
+
+    const yearOf = (dateStr: string) => new Date(dateStr).getFullYear();
+
+    const typeById = new Map<number, LeaveType>();
+    for (const t of leaveTypes) typeById.set(Number(t.id), t);
+
+    const getDeductFrom = (typeId: number): "planned" | "unplanned" | "none" => {
+      const t = typeById.get(Number(typeId));
+      const d = (t?.deduct_from ?? "none") as any;
+      return (d === "planned" || d === "unplanned" || d === "none") ? d : "none";
+    };
+
+    const getTypeName = (typeId: number): string => typeById.get(Number(typeId))?.name ?? String(typeId);
+
     // Normalize employee code to avoid mismatches (spaces, zero-width chars, Arabic-Indic digits)
     const normalizeCode = (input: string) => {
       const map: Record<string, string> = {
@@ -394,6 +415,7 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
 
     let insertedCount = 0;
     const missingCodes: string[] = [];
+    const balanceExceeded: string[] = [];
 
     try {
       const normalizedRows = rows.map(r => ({
@@ -407,17 +429,27 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
         throw new Error("Please enter at least one employee code.");
       }
 
-      // Pre-validate codes so one missing code does not block other inserts
+      // Load employees (and balances) so one missing code does not block other inserts
       const { data: empRows, error: empErr } = await supabase
         .from("employees")
-        .select("code")
+        .select("id, code, planned_annual_balance, unplanned_annual_balance")
         .in("code", distinctCodes);
 
       if (empErr) throw empErr;
 
-      const existing = new Set((empRows ?? []).map((e:any) => normalizeCode(e.code)));
+      const employeesByCode = new Map<string, { id: string; planned: number; unplanned: number }>();
+      for (const e of (empRows ?? []) as any[]) {
+        employeesByCode.set(normalizeCode(e.code), {
+          id: e.id,
+          planned: Number(e.planned_annual_balance ?? 0),
+          unplanned: Number(e.unplanned_annual_balance ?? 0),
+        });
+      }
 
-      const rowsToInsert = normalizedRows.filter(r => {
+      const existing = new Set(Array.from(employeesByCode.keys()));
+
+      // Filter out missing codes first
+      const candidateRows = normalizedRows.filter(r => {
         if (!r.code) return false;
         if (!existing.has(r.code)) {
           if (!missingCodes.includes(r.code)) missingCodes.push(r.code);
@@ -425,6 +457,94 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
         }
         return true;
       });
+
+      // Compute current remaining balances per employee for this year (client-side, for UX)
+      const yearStart = `${currentYear}-01-01`;
+      const yearEnd = `${currentYear}-12-31`;
+      const employeeIds = Array.from(new Set(Array.from(employeesByCode.values()).map(v => v.id)));
+
+      const usedByEmp = new Map<string, { planned: number; unplanned: number }>();
+      for (const id of employeeIds) usedByEmp.set(id, { planned: 0, unplanned: 0 });
+
+      // Page through leave_records for the selected employees in the selected year
+      const pageSize = 1000;
+      let from = 0;
+      while (employeeIds.length > 0) {
+        const { data: batch, error: bErr } = await supabase
+          .from("leave_records")
+          .select("employee_id, leave_days, leave_types(deduct_from)")
+          .in("employee_id", employeeIds)
+          .gte("start_date", yearStart)
+          .lte("start_date", yearEnd)
+          .range(from, from + pageSize - 1);
+        if (bErr) throw bErr;
+
+        const rows = (batch ?? []) as any[];
+        for (const r of rows) {
+          const empId = r.employee_id as string;
+          const d = (r.leave_types?.deduct_from ?? "none") as string;
+          const days = Number(r.leave_days ?? 0);
+          const cur = usedByEmp.get(empId) ?? { planned: 0, unplanned: 0 };
+          if (d === "planned") cur.planned += days;
+          if (d === "unplanned") cur.unplanned += days;
+          usedByEmp.set(empId, cur);
+        }
+
+        if (rows.length < pageSize) break;
+        from += pageSize;
+      }
+
+      const remainingByEmpId = new Map<string, { planned: number; unplanned: number }>();
+      for (const { id, planned, unplanned } of employeesByCode.values()) {
+        const used = usedByEmp.get(id) ?? { planned: 0, unplanned: 0 };
+        remainingByEmpId.set(id, {
+          planned: Math.max(0, planned - used.planned),
+          unplanned: Math.max(0, unplanned - used.unplanned),
+        });
+      }
+
+      // Validate balances per row, and skip any row that would exceed remaining (do not submit it)
+      const rowsToInsert: BulkRow[] = [];
+      for (const r of candidateRows) {
+        // Cross-year check (same as DB constraint, but clearer message)
+        if (yearOf(r.start_date) !== yearOf(r.end_date)) {
+          balanceExceeded.push(`${r.code}: Cross-year record is not allowed (${r.start_date} → ${r.end_date}).`);
+          continue;
+        }
+        if (yearOf(r.start_date) !== currentYear) {
+          balanceExceeded.push(`${r.code}: Dates must be inside year ${currentYear}.`);
+          continue;
+        }
+
+        const emp = employeesByCode.get(r.code);
+        if (!emp) continue;
+
+        const d = getDeductFrom(r.leave_type_id);
+        const reqDays = daysInclusive(r.start_date, r.end_date);
+        if (reqDays <= 0) {
+          balanceExceeded.push(`${r.code}: Invalid dates (${r.start_date} → ${r.end_date}).`);
+          continue;
+        }
+
+        const rem = remainingByEmpId.get(emp.id) ?? { planned: 0, unplanned: 0 };
+        if (d === "planned") {
+          if (reqDays > rem.planned) {
+            balanceExceeded.push(`${r.code}: Planned requested ${reqDays} day(s) exceeds remaining ${rem.planned}.`);
+            continue;
+          }
+          rem.planned -= reqDays;
+          remainingByEmpId.set(emp.id, rem);
+        } else if (d === "unplanned") {
+          if (reqDays > rem.unplanned) {
+            balanceExceeded.push(`${r.code}: Un-Planned requested ${reqDays} day(s) exceeds remaining ${rem.unplanned}.`);
+            continue;
+          }
+          rem.unplanned -= reqDays;
+          remainingByEmpId.set(emp.id, rem);
+        }
+
+        rowsToInsert.push(r);
+      }
 
       // Insert one by one to preserve clear balance/validation errors
       for (const row of rowsToInsert) {
@@ -440,9 +560,18 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
       }
 
       setMsg(`Inserted ${insertedCount} record(s).`);
-      if (missingCodes.length > 0) {
-        setErr(`Employee not found for code(s): ${missingCodes.join(", ")}.`);
+
+      const warnings: string[] = [];
+      if (missingCodes.length > 0) warnings.push(`Employee not found for code(s): ${missingCodes.join(", ")}.`);
+      if (balanceExceeded.length > 0) {
+        const preview = balanceExceeded.slice(0, 10);
+        warnings.push(
+          `Skipped ${balanceExceeded.length} row(s) due to insufficient balance or invalid dates. ` +
+          `${preview.join(" | ")}` +
+          (balanceExceeded.length > 10 ? " | …" : "")
+        );
       }
+      if (warnings.length > 0) setErr(warnings.join("\n"));
     } catch (e:any) {
       const base = e?.message ?? String(e);
       setErr(insertedCount > 0 ? `Inserted ${insertedCount} record(s) before failure. ${base}` : base);
@@ -454,7 +583,7 @@ function AdminBulkLeaves({ currentYear, leaveTypes }: { currentYear: number; lea
   return (
     <div className="space-y-4">
       <div className="text-sm text-slate-600 dark:text-slate-300">
-        Add multiple leave records in one shot. If a deducted balance is insufficient, the insert fails with an error.
+        Add multiple leave records in one shot. Rows that exceed the remaining Planned/Un-Planned balance are skipped (not submitted).
       </div>
 
       <div className="flex items-center gap-2">
@@ -752,6 +881,55 @@ function AdminEmployeeStatus({ currentYear, leaveTypes }: { currentYear: number;
     setErr(null);
     setInfo(null);
     try {
+      // Client-side balance guard for Planned / Un-Planned (DB trigger enforces this too).
+      const daysInclusive = (start: string, end: string): number => {
+        const s = new Date(start);
+        const e = new Date(end);
+        if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0;
+        const diff = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24));
+        return diff + 1;
+      };
+
+      const typeById = new Map<number, LeaveType>();
+      for (const t of leaveTypes) typeById.set(Number(t.id), t);
+      const getDeductFrom = (typeId: number): "planned" | "unplanned" | "none" => {
+        const t = typeById.get(Number(typeId));
+        const d = (t?.deduct_from ?? "none") as any;
+        return (d === "planned" || d === "unplanned" || d === "none") ? d : "none";
+      };
+
+      const y1 = new Date(edit.start_date).getFullYear();
+      const y2 = new Date(edit.end_date).getFullYear();
+      if (y1 !== y2) throw new Error("Cross-year record is not allowed.");
+      if (y1 !== year) throw new Error(`Dates must be inside year ${year}.`);
+
+      const newDays = daysInclusive(edit.start_date, edit.end_date);
+      if (newDays <= 0) throw new Error("Invalid dates.");
+
+      // Reconstruct what the remaining would be if we remove the old record, then apply the edited record.
+      if (status) {
+        const original = records.find((r: any) => r.id === edit.id);
+        const oldDays = Number(original?.leave_days ?? 0);
+        const oldTypeId = Number(original?.leave_type_id ?? edit.leave_type_id);
+
+        const oldDeduct = (original?.leave_types?.deduct_from as any) ?? getDeductFrom(oldTypeId);
+        const newDeduct = getDeductFrom(Number(edit.leave_type_id));
+
+        const basePlannedRemaining = Number(status.remaining_planned_days ?? 0);
+        const baseUnplannedRemaining = Number(status.remaining_unplanned_days ?? 0);
+
+        // Add back the old record (since it is already included in remaining), then validate the new one.
+        const plannedAvail = basePlannedRemaining + (oldDeduct === "planned" ? oldDays : 0);
+        const unplannedAvail = baseUnplannedRemaining + (oldDeduct === "unplanned" ? oldDays : 0);
+
+        if (newDeduct === "planned" && newDays > plannedAvail) {
+          throw new Error(`Insufficient planned balance. Requested ${newDays} day(s), remaining ${plannedAvail}.`);
+        }
+        if (newDeduct === "unplanned" && newDays > unplannedAvail) {
+          throw new Error(`Insufficient un-planned balance. Requested ${newDays} day(s), remaining ${unplannedAvail}.`);
+        }
+      }
+
       const { error } = await supabase.from("leave_records").update({
         start_date: edit.start_date,
         end_date: edit.end_date,
