@@ -537,6 +537,140 @@ function AdminEmployeeStatus({ currentYear, leaveTypes }: { currentYear: number;
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
+  const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; code: string; name: string } | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+
+  const downloadCsv = (rows: any[], filename: string) => {
+    if (!rows || rows.length === 0) return;
+
+    const escape = (val: any) => {
+      if (val === null || val === undefined) return "";
+      const s = String(val);
+      const needsQuotes = /[",\n\r]/.test(s);
+      const escaped = s.replace(/"/g, '""');
+      return needsQuotes ? `"${escaped}"` : escaped;
+    };
+
+    const headers = Object.keys(rows[0]);
+    const lines = [
+      headers.join(","),
+      ...rows.map((r: any) => headers.map((h) => escape(r[h])).join(",")),
+    ];
+
+    // Add UTF-8 BOM so Excel opens Arabic/Unicode correctly.
+    const csv = "\ufeff" + lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  async function exportCurrentView() {
+    setErr(null);
+    setInfo(null);
+    if (!records || records.length === 0) {
+      setErr("No records loaded to export. Click Load first.");
+      return;
+    }
+    setExportBusy(true);
+    try {
+      const empCode = selectedEmployee?.code ?? code;
+      const empName = selectedEmployee?.name ?? "";
+      const rows = records.map((r: any) => ({
+        EmployeeCode: empCode,
+        EmployeeName: empName,
+        Year: year,
+        StartDate: r.start_date,
+        EndDate: r.end_date,
+        LeaveDays: r.leave_days,
+        LeaveType: r.leave_types?.name ?? r.leave_type_id,
+        DeductFrom: r.leave_types?.deduct_from ?? "",
+        Remarks: r.remarks ?? "",
+      }));
+      const safeCode = (empCode || "employee").replace(/[^A-Za-z0-9_-]/g, "_");
+      const fname = `leave-records-${safeCode}-${year}.csv`;
+      downloadCsv(rows, fname);
+      setInfo(`Exported ${rows.length} record(s) (current view).`);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  async function exportAllRecords() {
+    setErr(null);
+    setInfo(null);
+    setExportBusy(true);
+    try {
+      const pageSize = 1000;
+      let from = 0;
+      const all: any[] = [];
+
+      while (true) {
+        const { data, error } = await supabase
+          .from("leave_records")
+          .select("id, code, start_date, end_date, leave_days, leave_type_id, remarks, created_at, updated_at, leave_types(name, deduct_from)")
+          .order("start_date", { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (error) throw error;
+        const batch = (data ?? []) as any[];
+        all.push(...batch);
+        if (batch.length < pageSize) break;
+        from += pageSize;
+      }
+
+      // Build a code -> employee details map (avoids FK relationship ambiguity in select).
+      const codes = Array.from(new Set(all.map((r: any) => r.code).filter(Boolean)));
+      const empByCode = new Map<string, { name: string; user_id: string }>();
+
+      const chunk = <T,>(arr: T[], size: number) => {
+        const out: T[][] = [];
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+        return out;
+      };
+
+      for (const c of chunk(codes, 500)) {
+        const { data: emps, error: eErr } = await supabase
+          .from("employees")
+          .select("code, name, user_id")
+          .in("code", c);
+
+        if (eErr) throw eErr;
+        for (const e of (emps ?? []) as any[]) {
+          empByCode.set(e.code, { name: e.name, user_id: e.user_id });
+        }
+      }
+
+      const rows = all.map((r: any) => ({
+        RecordId: r.id,
+        EmployeeCode: r.code,
+        EmployeeName: (empByCode.get(r.code)?.name ?? ""),
+        UserId: (empByCode.get(r.code)?.user_id ?? ""),
+        StartDate: r.start_date,
+        EndDate: r.end_date,
+        LeaveDays: r.leave_days,
+        LeaveType: r.leave_types?.name ?? r.leave_type_id,
+        DeductFrom: r.leave_types?.deduct_from ?? "",
+        Remarks: r.remarks ?? "",
+        CreatedAt: r.created_at,
+        UpdatedAt: r.updated_at,
+      }));
+
+      const today = new Date().toISOString().slice(0, 10);
+      const fname = `leave-records-all-${today}.csv`;
+      downloadCsv(rows, fname);
+      setInfo(`Exported ${rows.length} record(s) (all records).`);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   type EmployeeOption = Pick<Employee, "id" | "code" | "name">;
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
@@ -584,6 +718,8 @@ function AdminEmployeeStatus({ currentYear, leaveTypes }: { currentYear: number;
       if (!code) throw new Error("Please select an employee.");
       const { data: emp, error: empErr } = await supabase.from("employees").select("id, code, name, hiring_date").eq("code", code).single();
       if (empErr) throw empErr;
+
+      setSelectedEmployee({ id: emp.id, code: emp.code, name: emp.name });
 
       const { data: st, error: stErr } = await supabase
         .from("v_employee_year_status")
@@ -674,7 +810,12 @@ function AdminEmployeeStatus({ currentYear, leaveTypes }: { currentYear: number;
             <select
               className="input"
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCode(v);
+                const found = employees.find((x) => x.code === v);
+                setSelectedEmployee(found ? { id: found.id as any, code: found.code as any, name: found.name as any } : null);
+              }}
               disabled={loadingEmployees || employees.length === 0}
             >
               <option value="">Select employee…</option>
@@ -699,8 +840,14 @@ function AdminEmployeeStatus({ currentYear, leaveTypes }: { currentYear: number;
           <div className="label mb-1">Year</div>
           <input className="input" type="number" value={year} onChange={(e)=>setYear(parseInt(e.target.value||`${currentYear}`,10))} />
         </div>
-        <div className="flex items-end">
+        <div className="flex items-end gap-2 flex-wrap">
           <button className="btn" onClick={load}>Load</button>
+          <button className="btn-secondary" onClick={exportCurrentView} disabled={exportBusy || records.length === 0}>
+            {exportBusy ? "Exporting…" : "Export view"}
+          </button>
+          <button className="btn-secondary" onClick={exportAllRecords} disabled={exportBusy}>
+            {exportBusy ? "Exporting…" : "Export all"}
+          </button>
         </div>
       </div>
 
